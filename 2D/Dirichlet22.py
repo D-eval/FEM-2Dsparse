@@ -30,6 +30,7 @@ class Unit:
 # 首先需要一个函数，给定一个点，返回所有相邻点
 # 这将决定 Phi 的相邻 Phi
 def get_neighbor_points(point):
+    # 邻居点包含自身
     unit_dict = Point2Unit[point]
     points = []
     for unit, idx in unit_dict.items():
@@ -42,6 +43,7 @@ def get_neighbor_points(point):
             points.append(p1)
         if p2 not in points:
             points.append(p2)
+    points.append(point)
     return points
 
 def get_nabla(unit):
@@ -120,7 +122,7 @@ def get_partial_Phi_dot(p1, p2, dim_choice):
             pass
     dot = 0
     for tri, (unit1, unit2) in tri_units.items():
-        dot += get_Dphi_dot(unit1, unit2, dim_choice)
+        dot += get_partial_phi_dot(unit1, unit2, dim_choice)
     return dot
 
 # 为了获得常数项，我们定义一个获得Phi总面积的函数
@@ -140,7 +142,7 @@ def get_units(all_tri):
             _ = Unit(tri, i)
             
 # xy: (2,)
-def get_matrix(xy_boundary, kappa, f1, f2, dh,
+def get_matrix(xy_boundary, f1, f2, dh,
                lam, mu, g1, g2):
     '''
     Example:
@@ -176,26 +178,21 @@ def get_matrix(xy_boundary, kappa, f1, f2, dh,
         
         points_neighbor = get_neighbor_points(point)
         
-        self_dot_11 = get_partial_Phi_dot(point, point, (0,0))
-        self_dot_22 = get_partial_Phi_dot(point, point, (1,1))
-        self_dot_12 = get_partial_Phi_dot(point, point, (0,1))
-        self_dot_21 = get_partial_Phi_dot(point, point, (1,0))
-        AllEq[point][0][point][0] = (lam+2*mu)*self_dot_11 + \
-            mu * self_dot_22
-        AllEq[point][0][point][1] = lam * self_dot_21 + mu * self_dot_12
-        
         for point_neighbor in points_neighbor:
             dot_11 = get_partial_Phi_dot(point_neighbor, point, (0,0))
             dot_22 = get_partial_Phi_dot(point_neighbor, point, (1,1))
             dot_12 = get_partial_Phi_dot(point_neighbor, point, (0,1))
             dot_21 = get_partial_Phi_dot(point_neighbor, point, (1,0))
-            assert dot_12 == dot_21
-            AllEq[point][0][point_neighbor][0] = (mu+2*lam)*dot_11 + mu*dot_22
+            # assert dot_12 == dot_21
+            AllEq[point][0][point_neighbor] = {} # malloc
+            AllEq[point][1][point_neighbor] = {} # malloc
+            
+            AllEq[point][0][point_neighbor][0] = (2*mu+lam)*dot_11 + mu*dot_22
             AllEq[point][0][point_neighbor][1] = lam*dot_21 + mu*dot_12
-            AllEq[point][1][point_neighbor][1] = (mu+2*lam)*dot_22 + mu*dot_11
+            AllEq[point][1][point_neighbor][1] = (2*mu+lam)*dot_22 + mu*dot_11
             AllEq[point][1][point_neighbor][0] = lam*dot_12 + mu*dot_21
  
-    apply_dirichlet(AllEq, g1, g2)
+    #apply_dirichlet(AllEq, g1, g2)
     return AllEq, all_point, all_tri
 
 def apply_dirichlet(AllEq, g1, g2):
@@ -216,75 +213,42 @@ def apply_dirichlet(AllEq, g1, g2):
                                       1:1}
             AllEq[point][1]['const'] = g2(point.xy)
             
-# 迭代
-# x = x + k*(Ax - b)
 
-def solve_matrix(AllEq, num_epoch=5000):
+def solve_matrix_torch(AllEq, all_point, num_epoch=3000, lr=4e-4, device='cpu'):
     """
-    梯度下降 解 稀疏线性方程组
-    """
-    # global AllUnit
-    temp_solve = np.random.rand(len(AllUnit))
-    b = np.zeros(len(AllUnit))
-    for idx_j, unit_j in enumerate(AllUnit.values()):
-        b_j = AllEq[unit_j]['const']
-        b[idx_j] = b_j
-    Unit2Idx = {unit: idx for idx, unit in enumerate(AllUnit.values())}
-    Ax = np.zeros(len(AllUnit))
-    # 迭代法求解 稀疏线性方程组
-    for epoch in range(num_epoch):
-        for idx_j, unit_j in enumerate(AllUnit.values()):
-            temp_sum = 0
-            for unit_i, coef in AllEq[unit_j].items():
-                if unit_i == 'const':
-                    continue
-                temp_sum += coef * temp_solve[Unit2Idx[unit_i]]
-            Ax[idx_j] = temp_sum
-        error = Ax - b
-        temp_solve -= 0.0001 * error
-        print(error.mean())
-    Point2Value = {}
-    for unit, idx in Unit2Idx.items():
-        point,_,_ = unit.getPoint()
-        if Point2Value.get(point) is None:
-            Point2Value[point] = temp_solve[idx]
-        else:
-            Point2Value[point] += temp_solve[idx]
-    return Point2Value
-
-
-def solve_matrix_torch(AllEq, all_point, num_epoch=5000, lr=4e-3, device='cpu'):
-    """
-    使用 PyTorch（Adam）求解 AllEq 定义的线性系统 A x = b
-    AllEq: { unit_j : { unit_i: coef, ..., 'const': b_j } }
+    return: Point2Value: {Point: (val1, val2)}
     """
     tau = 0.9999
     Units = list(AllEq.keys())
-    m = len(Units)
     n = len(all_point)
     # 批量映射 Index
     Point2Idx = {p: i for i, p in enumerate(all_point)}
     # 初始 x（解）
-    x = torch.zeros(n, dtype=torch.float64, device=device, requires_grad=True)
+    x = torch.zeros((n,2), dtype=torch.float64, device=device, requires_grad=True)
     # b 向量
-    b = torch.zeros(n, dtype=torch.float64, device=device)
+    b = torch.zeros((n,2), dtype=torch.float64, device=device)
     for p, ip in Point2Idx.items():
-        b[ip] = AllEq[p]['const']
+        b[ip,0] = AllEq[p][0]['const']
+        b[ip,1] = AllEq[p][1]['const']
     # Adam 优化器（超快收敛）
     optimizer = torch.optim.Adam([x], lr=lr)
     for epoch in range(num_epoch):
         # --- 构造 Ax（稀疏计算，不建立矩阵）---
-        Ax = torch.zeros_like(b)
+        Ax = torch.zeros_like(b) # (n,2)
         for p, ip in Point2Idx.items():
-            val = 0.0
-            for pj, coef in AllEq[p].items():
-                if pj == 'const':
-                    continue
-                jp = Point2Idx[pj]
-                val += coef * x[jp]
-            Ax[ip] = val
+            for d1 in [0,1]:
+                val = 0
+                for pj, coef_d2 in AllEq[p][d1].items():
+                    if pj == 'const':
+                        continue
+                    coef1 = coef_d2[0]
+                    coef2 = coef_d2[1]
+                    jp = Point2Idx[pj]
+                    val += coef1 * x[jp,0] + coef1 * x[jp,1]
+                Ax[ip,d1] = val
         # --- loss = 1/2 * ||Ax - b||^2 ---
         error = (Ax - b)**2
+        error = error.view(-1)
         choice = F.softmax(error * 100, dim=0)
         loss = torch.sum(error * choice)
         # loss = torch.mean(error)
@@ -302,8 +266,9 @@ def solve_matrix_torch(AllEq, all_point, num_epoch=5000, lr=4e-3, device='cpu'):
 
 
     for point, idx in Point2Idx.items():
-        val = x[idx].item()
-        Point2Value[point] = val
+        val1 = x[idx,0].item()
+        val2 = x[idx,1].item()
+        Point2Value[point] = (val1, val2)
     # print(len(Point2Value))
     # print(len(all_point))
     return Point2Value
@@ -328,60 +293,86 @@ def plot_real(Point2Value, u_real):
 '''
 
 def plot_solve(Point2Value):
-    ax = plt.figure().add_subplot(projection='3d')
-    xs, ys, zs = [], [], []
+    # point 的 位移 (u1,u2)
+    xs, ys, z1s, z2s = [], [], [], []
 
     for point, value in Point2Value.items():
         x, y = point.xy
         xs.append(x)
         ys.append(y)
-        zs.append(value)
+        z1s.append(value[0])
+        z2s.append(value[1])
 
-    ax.scatter(xs, ys, zs, color='blue', s=10, label='FEM solution')
-    ax.legend()
-    return ax
-
-def plot_real(Point2Value, u_real):
-    ax = plt.figure().add_subplot(projection='3d')
-    xs, ys, zs = [], [], []
-
-    for point, value in Point2Value.items():
-        x, y = point.xy
-        xs.append(x)
-        ys.append(y)
-        zs.append(u_real(point.xy))
-
-    ax.scatter(xs, ys, zs, color='red', s=10, label='Exact solution')
-    ax.legend()
-    return ax
-
-def plot_compare(Point2Value, u_real):
+    # 2 个 subplot
     fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
+    ax = fig.add_subplot(121, projection='3d')    
+    ax.scatter(xs, ys, z1s, color='blue', s=10, label='cal u1')
+    ax.legend()
+    ax = fig.add_subplot(122, projection='3d')
+    ax.scatter(xs, ys, z2s, color='blue', s=10, label='cal u2')
+    ax.legend()
 
-    xs, ys, zfem, zreal = [], [], [], []
-    point2L1 = {}
-    for p, v in Point2Value.items():
-        x, y = p.xy
+    
+
+def plot_real(Point2Value, u1_real, u2_real):
+    ax = plt.figure().add_subplot(projection='3d')
+    xs, ys, z1s, z2s = [], [], [], []
+    loss = 0
+    
+    for point, value in Point2Value.items():
+        x, y = point.xy
         xs.append(x)
         ys.append(y)
-        zfem.append(v)
-        z_real = u_real(p.xy)
-        zreal.append(z_real)
-        point2L1[p] = np.abs(v - z_real)
+        
+        z1_pred = value[0]
+        z2_pred = value[1]
+        z1_real = u1_real(point.xy)
+        z2_real = u2_real(point.xy)
 
-    ax.scatter(xs, ys, zfem, color='blue',  s=12, label='FEM')
-    ax.scatter(xs, ys, zreal, color='red', s=12, label='Exact')
+        loss += (z1_pred - z1_real)**2 + (z2_pred - z2_real)**2
+        
+        z1s.append(z1_real)
+        z2s.append(z2_real)
 
+    fig = plt.figure()
+    ax = fig.add_subplot(121, projection='3d')
+    ax.scatter(xs, ys, z1s, color='red', s=10, label='real u1')
     ax.legend()
-    return point2L1, ax
+    ax = fig.add_subplot(122, projection='3d')
+    ax.scatter(xs, ys, z2s, color='red', s=10, label='real u2')
+    ax.legend()
 
+    return loss / len(Point2Value)
 
-
-
-def solve_Dirichlet(xy_boundary, kappa, g, f, dh, num_epoch):
-    AllEq, all_point, all_tri = get_matrix(xy_boundary, kappa, g, f, dh)
+def solve_Dirichlet(xy_boundary, g1, g2, f1, f2, lam, mu, dh, num_epoch):
+    AllEq, all_point, all_tri = get_matrix(xy_boundary, f1, f2, dh, lam, mu, g1, g2)
     Point2Value = solve_matrix_torch(AllEq, all_point, num_epoch=num_epoch)
     return Point2Value, all_point, all_tri
 
 
+
+g1 = lambda xy: 0
+g2 = lambda xy: 0
+lam = 1
+mu = 2
+
+pi = np.pi
+sin = np.sin
+cos = np.cos
+f1 = lambda xy: (lam+3*mu) * (-pi**2 * sin(pi*xy[0]) * sin(pi*xy[1])) + (lam+mu) * (2*xy[0]-1) * (2*xy[1]-1)
+f2 = lambda xy: (lam+2*mu) * 2*(xy[0]**2-xy[0]) + mu * 2*(xy[1]**2-xy[1]) + (lam+mu) * pi**2 * cos(pi*xy[0]) * cos(pi*xy[1])
+
+xy_boundary = np.array([[0,0], [1,0], [1,1], [0,1]])
+dh = 0.1
+
+Point2Value, all_point, all_tri = solve_Dirichlet(xy_boundary, g1, g2, f1, f2, lam, mu, dh, num_epoch=3000)
+
+plot_solve(Point2Value)
+plt.savefig('./output/D22_solve.png')
+
+u1_real = lambda xy: sin(pi*xy[0]) * sin(pi*xy[1])
+u2_real = lambda xy: xy[0]*(xy[0]-1)*xy[1]*(xy[1]-1)
+l2 = plot_real(Point2Value, u1_real, u2_real)
+plt.savefig('./output/D22_real.png')
+
+print(f"L2 loss: {l2}")
