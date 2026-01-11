@@ -6,6 +6,8 @@ from mesh_div import get_tri
 import torch
 import torch.nn.functional as F
 
+import os
+
 # {(tri,point_idx): Unit}
 AllUnit = {}
 Point2Unit = {} # {Point: {Unit: idx}}
@@ -368,11 +370,12 @@ dh = 0.1
 Point2Value, all_point, all_tri = solve_Dirichlet(xy_boundary, g1, g2, f1, f2, lam, mu, dh, num_epoch=3000)
 
 plot_solve(Point2Value)
-plt.savefig('./output/D22_solve.png')
+
+plt.savefig(os.path.join(".","output","D22_solve.png"))
 
 u1_real = lambda xy: sin(pi*xy[0]) * sin(pi*xy[1])
 u2_real = lambda xy: xy[0]*(xy[0]-1)*xy[1]*(xy[1]-1)
 l2 = plot_real(Point2Value, u1_real, u2_real)
-plt.savefig('./output/D22_real.png')
+plt.savefig(os.path.join(".","output","D22_real.png"))
 
 print(f"L2 loss: {l2}")
