@@ -216,7 +216,7 @@ def apply_dirichlet(AllEq, g):
             AllEq[point][point] = 1
 
 
-def solve_matrix_torch(AllEq, all_point, num_epoch=5000, lr=3e-2, device='cpu'):
+def solve_matrix_torch(AllEq, all_point, num_epoch=5000, lr=3e-2, device='cpu', show_train=True):
     """
     使用 PyTorch（Adam）求解 AllEq 定义的线性系统 A x = b
     AllEq: { unit_j : { unit_i: coef, ..., 'const': b_j } }
@@ -263,7 +263,7 @@ def solve_matrix_torch(AllEq, all_point, num_epoch=5000, lr=3e-2, device='cpu'):
         loss.backward()
         optimizer.step()
 
-        if epoch % 100 == 0:
+        if epoch % 100 == 0 and show_train:
             print(f"Epoch {epoch}, loss = {loss.item()}")
             # print(f"choiceMax: {choice.max().item()}")
         # lr *= tau
@@ -339,12 +339,13 @@ def plot_real(Point2Value, u_real):
 
     return loss / len(Point2Value)
 
-def solve_Dirichlet(xy_boundary, g, f, dh, c, num_epoch):
+def solve_Dirichlet(xy_boundary, g, f, dh, c, num_epoch, show_train=False):
     AllEq, all_point, all_tri = get_matrix(xy_boundary, f, dh, c, g)
-    Point2Value = solve_matrix_torch(AllEq, all_point, num_epoch=num_epoch)
+    Point2Value = solve_matrix_torch(AllEq, all_point, num_epoch=num_epoch, show_train=show_train)
     return Point2Value, all_point, all_tri
 
 
+'''
 
 c = [[
     lambda xy: 1,
@@ -374,3 +375,4 @@ plt.savefig(os.path.join(".","output","D2NCN_real.png"))
 
 print(f"L2 loss: {l2}")
 
+'''
