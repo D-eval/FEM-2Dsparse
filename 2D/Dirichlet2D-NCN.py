@@ -1,3 +1,9 @@
+'''
+Dirichlet2D-NCN
+NCN:
+\nabla c \nabla u = f
+c 是矩阵
+'''
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -143,19 +149,9 @@ def get_units(all_tri):
         for i in range(3):
             _ = Unit(tri, i)
             
+
 # xy: (2,)
-def get_matrix(xy_boundary, f1, f2, dh,
-               lam, mu, g1, g2):
-    '''
-    Example:
-    kappa = lambda xy: 2
-    g = lambda xy: np.exp(xy[0]+xy[1])
-    f = lambda xy: np.exp(xy[0]+xy[1])
-    # 定义边界
-    xy_boundary = np.array([[0,0], [1,0], [1,1], [0,1]])
-    # 网格半径
-    dh = 0.1
-    '''
+def get_matrix(xy_boundary, f, dh, c, g):
     AllUnit.clear()
     # 网格
     all_tri, all_point = get_tri(xy_boundary, dh, need_disp=False)
@@ -170,31 +166,33 @@ def get_matrix(xy_boundary, f1, f2, dh,
     # 未知数个数: point
     for point, unit_dict in Point2Unit.items():
         # 这表示一个 Phi
-        AllEq[point] = {0:{},1:{}}
-        f1_xi = f1(point.xy)
-        f2_xi = f2(point.xy)
+        AllEq[point] = {}
+        xy_i = point.xy
+        f_xi = f(xy_i)
         area = get_Phi_area(point)
         volume = area / 3
-        AllEq[point][0]['const'] = - f1_xi * volume
-        AllEq[point][1]['const'] = - f2_xi * volume
-        
+        AllEq[point]['const'] = - f_xi * volume
+
         points_neighbor = get_neighbor_points(point)
 
+
+
         for point_neighbor in points_neighbor:
+            xy_j = point_neighbor.xy
+            xy = (xy_i + xy_j) / 2
             dot_11 = get_partial_Phi_dot(point_neighbor, point, (0,0))
             dot_22 = get_partial_Phi_dot(point_neighbor, point, (1,1))
             dot_12 = get_partial_Phi_dot(point_neighbor, point, (0,1))
             dot_21 = get_partial_Phi_dot(point_neighbor, point, (1,0))
             # assert dot_12 == dot_21
-            AllEq[point][0][point_neighbor] = {} # malloc
-            AllEq[point][1][point_neighbor] = {} # malloc
-            
-            AllEq[point][0][point_neighbor][0] = (2*mu+lam)*dot_11 + mu*dot_22
-            AllEq[point][0][point_neighbor][1] = lam*dot_21 + mu*dot_12
-            AllEq[point][1][point_neighbor][1] = (2*mu+lam)*dot_22 + mu*dot_11
-            AllEq[point][1][point_neighbor][0] = lam*dot_12 + mu*dot_21
- 
-    apply_dirichlet(AllEq, g1, g2)
+            coef =  c[0][0](xy) * dot_11 +\
+                c[1][0](xy) * dot_12 +\
+                c[0][1](xy) * dot_21 +\
+                c[1][1](xy) * dot_22
+            AllEq[point][point_neighbor] = coef
+
+
+    apply_dirichlet(AllEq, g)
     return AllEq, all_point, all_tri
 
 
@@ -209,81 +207,57 @@ def is_boundary(point):
             return True
     return False
 
-def apply_dirichlet(AllEq, g1, g2):
+def apply_dirichlet(AllEq, g):
     # Dirichlet 边界条件
     for point in AllEq.keys():
         if is_boundary(point):
-            AllEq[point][0] = {}
-            AllEq[point][0][point] = {0:1,
-                                      1:0}
-            AllEq[point][0]['const'] = g1(point.xy)
-            
-            AllEq[point][1] = {}
-            AllEq[point][1][point] = {0:0,
-                                      1:1}
-            AllEq[point][1]['const'] = g2(point.xy)
+            xy = point.xy
+            AllEq[point]["const"] = g(xy)
+            AllEq[point][point] = 1
 
 
-def _apply_dirichlet(AllEq, g1, g2):
-    # Dirichlet 边界条件
-    for point in AllEq.keys():
-        # is_boundary = True if len([1 for tri in [unit.tri for unit in Point2Unit[point].keys()] if None in tri.neighborTri]) >= 0 else False
-        tris = [unit.tri for unit in Point2Unit[point].keys()]
-        # 这个点只要参与过带 boundary 边的三角形，就视为边界点
-        is_boundary = any(None in tri.neighborTri for tri in tris)
-        if is_boundary:
-            AllEq[point][0] = {}
-            AllEq[point][0][point] = {0:1,
-                                      1:0}
-            AllEq[point][0]['const'] = g1(point.xy)
-            
-            AllEq[point][1] = {}
-            AllEq[point][1][point] = {0:0,
-                                      1:1}
-            AllEq[point][1]['const'] = g2(point.xy)
-            
-
-def solve_matrix_torch(AllEq, all_point, num_epoch=3000, lr=1e-1, device='cpu'):
+def solve_matrix_torch(AllEq, all_point, num_epoch=5000, lr=3e-2, device='cpu'):
     """
-    return: Point2Value: {Point: (val1, val2)}
+    使用 PyTorch（Adam）求解 AllEq 定义的线性系统 A x = b
+    AllEq: { unit_j : { unit_i: coef, ..., 'const': b_j } }
     """
     tau = 0.9999
     Units = list(AllEq.keys())
+    m = len(Units)
     n = len(all_point)
     # 批量映射 Index
     Point2Idx = {p: i for i, p in enumerate(all_point)}
     # 初始 x（解）
-    x = torch.zeros((n,2), dtype=torch.float64, device=device, requires_grad=True)
+    x = torch.zeros(n, dtype=torch.float64, device=device, requires_grad=True)
     # b 向量
-    b = torch.zeros((n,2), dtype=torch.float64, device=device)
+    b = torch.zeros(n, dtype=torch.float64, device=device)
+    mask_bool = torch.ones(n, dtype=bool)
     for p, ip in Point2Idx.items():
-        b[ip,0] = AllEq[p][0]['const']
-        b[ip,1] = AllEq[p][1]['const']
-    # Adam 优化器（超快收敛）
-    optimizer = torch.optim.SGD([x], lr=lr)
+        b[ip] = AllEq[p]['const']
+        if is_boundary(p):
+            x.data[ip] = AllEq[p]['const']
+            mask_bool[ip] = 0
+    optimizer = torch.optim.Adam([x], lr=lr)
     for epoch in range(num_epoch):
         # --- 构造 Ax（稀疏计算，不建立矩阵）---
-        Ax = torch.zeros_like(b) # (n,2)
+        Ax = torch.zeros_like(b)
         for p, ip in Point2Idx.items():
             if is_boundary(p):
-                x.data[ip,0] = AllEq[p][0]['const']
-                x.data[ip,1] = AllEq[p][1]['const']
-            for d1 in [0,1]:
-                val = 0
-                for pj, coef_d2 in AllEq[p][d1].items():
-                    if pj == 'const':
-                        continue
-                    coef1 = coef_d2[0]
-                    coef2 = coef_d2[1]
-                    jp = Point2Idx[pj]
-                    val += coef1 * x[jp,0] + coef2 * x[jp,1]
-                Ax[ip,d1] = val
+                x.data[ip] = AllEq[p]['const']
+            val = 0.0
+            for pj, coef in AllEq[p].items():
+                if pj == 'const':
+                    continue
+                jp = Point2Idx[pj]
+                val += coef * x[jp]
+            # if is_boundary(p):
+            #     assert val == b[ip], f"{val}, {b[ip]}"
+            Ax[ip] = val
         # --- loss = 1/2 * ||Ax - b||^2 ---
         error = (Ax - b)**2
-        error = error.view(-1)
-        #choice = F.softmax(error * 100, dim=0)
-        #loss = torch.sum(error * choice)
-        loss = torch.mean(error)
+        # choice = F.softmax(error * 100, dim=0)
+        # loss = torch.sum(error * choice)
+        loss = torch.mean(error[mask_bool])
         
         optimizer.zero_grad()
         loss.backward()
@@ -298,9 +272,8 @@ def solve_matrix_torch(AllEq, all_point, num_epoch=3000, lr=1e-1, device='cpu'):
 
 
     for point, idx in Point2Idx.items():
-        val1 = x[idx,0].item()
-        val2 = x[idx,1].item()
-        Point2Value[point] = (val1, val2)
+        val = x[idx].item()
+        Point2Value[point] = val
     # print(len(Point2Value))
     # print(len(all_point))
     return Point2Value
@@ -326,29 +299,25 @@ def plot_real(Point2Value, u_real):
 
 def plot_solve(Point2Value):
     # point 的 位移 (u1,u2)
-    xs, ys, z1s, z2s = [], [], [], []
+    xs, ys, zs = [], [], []
 
     for point, value in Point2Value.items():
         x, y = point.xy
         xs.append(x)
         ys.append(y)
-        z1s.append(value[0])
-        z2s.append(value[1])
+        zs.append(value)
 
     # 2 个 subplot
     fig = plt.figure()
-    ax = fig.add_subplot(121, projection='3d')    
-    ax.scatter(xs, ys, z1s, color='blue', s=10, label='cal u1')
-    ax.legend()
-    ax = fig.add_subplot(122, projection='3d')
-    ax.scatter(xs, ys, z2s, color='blue', s=10, label='cal u2')
+    ax = fig.add_subplot(111, projection='3d')    
+    ax.scatter(xs, ys, zs, color='blue', s=10, label='cal u')
     ax.legend()
 
     
 
-def plot_real(Point2Value, u1_real, u2_real):
+def plot_real(Point2Value, u_real):
     ax = plt.figure().add_subplot(projection='3d')
-    xs, ys, z1s, z2s = [], [], [], []
+    xs, ys, zs = [], [], []
     loss = 0
     
     for point, value in Point2Value.items():
@@ -356,57 +325,52 @@ def plot_real(Point2Value, u1_real, u2_real):
         xs.append(x)
         ys.append(y)
         
-        z1_pred = value[0]
-        z2_pred = value[1]
-        z1_real = u1_real(point.xy)
-        z2_real = u2_real(point.xy)
+        z_pred = value
+        z_real = u_real(point.xy)
 
-        loss += (z1_pred - z1_real)**2 + (z2_pred - z2_real)**2
+        loss += (z_pred - z_real)**2
         
-        z1s.append(z1_real)
-        z2s.append(z2_real)
+        zs.append(z_real)
 
     fig = plt.figure()
-    ax = fig.add_subplot(121, projection='3d')
-    ax.scatter(xs, ys, z1s, color='red', s=10, label='real u1')
-    ax.legend()
-    ax = fig.add_subplot(122, projection='3d')
-    ax.scatter(xs, ys, z2s, color='red', s=10, label='real u2')
+    ax = fig.add_subplot(111, projection='3d')
+    ax.scatter(xs, ys, zs, color='red', s=10, label='real u')
     ax.legend()
 
     return loss / len(Point2Value)
 
-def solve_Dirichlet(xy_boundary, g1, g2, f1, f2, lam, mu, dh, num_epoch):
-    AllEq, all_point, all_tri = get_matrix(xy_boundary, f1, f2, dh, lam, mu, g1, g2)
+def solve_Dirichlet(xy_boundary, g, f, dh, c, num_epoch):
+    AllEq, all_point, all_tri = get_matrix(xy_boundary, f, dh, c, g)
     Point2Value = solve_matrix_torch(AllEq, all_point, num_epoch=num_epoch)
     return Point2Value, all_point, all_tri
 
 
 
-g1 = lambda xy: 0
-g2 = lambda xy: 0
-lam = 1
-mu = 2
+c = [[
+    lambda xy: 1,
+    lambda xy: 2],[
+    lambda xy: 3,
+    lambda xy: 4
+    ]]
 
-pi = np.pi
-sin = np.sin
-cos = np.cos
-f1 = lambda xy: (lam+3*mu) * (-pi**2 * sin(pi*xy[0]) * sin(pi*xy[1])) + (lam+mu) * (2*xy[0]-1) * (2*xy[1]-1)
-f2 = lambda xy: (lam+2*mu) * 2*(xy[0]**2-xy[0]) + mu * 2*(xy[1]**2-xy[1]) + (lam+mu) * pi**2 * cos(pi*xy[0]) * cos(pi*xy[1])
+f = lambda xy: 10 * np.exp(xy[0]+xy[1])
+
+g = lambda xy: np.exp(xy[0]+xy[1])
 
 xy_boundary = np.array([[0,0], [1,0], [1,1], [0,1]])
-dh = 0.1
+dh = 1/8
 
-Point2Value, all_point, all_tri = solve_Dirichlet(xy_boundary, g1, g2, f1, f2, lam, mu, dh, num_epoch=7000)
+Point2Value, all_point, all_tri = solve_Dirichlet(xy_boundary, g, f, dh, c, num_epoch=1000)
 
 plot_solve(Point2Value)
 
-plt.savefig(os.path.join(".","output","D22_solve.png"))
+plt.savefig(os.path.join(".","output","D2NCN_solve.png"))
 
-u1_real = lambda xy: sin(pi*xy[0]) * sin(pi*xy[1])
-u2_real = lambda xy: xy[0]*(xy[0]-1)*xy[1]*(xy[1]-1)
-l2 = plot_real(Point2Value, u1_real, u2_real)
-plt.savefig(os.path.join(".","output","D22_real.png"))
+u_real = lambda xy: np.exp(xy[0]+xy[1])
+
+
+l2 = plot_real(Point2Value, u_real)
+plt.savefig(os.path.join(".","output","D2NCN_real.png"))
 
 print(f"L2 loss: {l2}")
 
