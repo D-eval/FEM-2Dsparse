@@ -76,11 +76,11 @@ Weaky form
 $$
 \begin{aligned}
 &
-(\lambda + 2\mu)(-<\partial_1 u_1, v>_{\partial_1} + <\partial_1 u_1, \partial_1 v>) +
+(\lambda + 2\mu)(<\partial_1 u_1, \partial_1 v>-<\partial_1 u_1, v>_{\partial_1}) +
 \\&
-(\lambda + \mu)(-<\partial_2 u_2, v>_{\partial_1} + <\partial_2 u_2, \partial_1 v>) +
+(\lambda + \mu)(<\partial_2 u_2, \partial_1 v>-<\partial_2 u_2, v>_{\partial_1}) +
 \\&
-\mu (-<\partial_2 u_1, v>_{\partial_2} + <\partial_2 u_1, \partial_2 v>)
+\mu (<\partial_2 u_1, \partial_2 v>-<\partial_2 u_1, v>_{\partial_2})
 \\&
 = -<f_1, v>
 \end{aligned}

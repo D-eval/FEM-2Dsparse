@@ -179,7 +179,7 @@ def get_matrix(xy_boundary, f1, f2, dh,
         AllEq[point][1]['const'] = - f2_xi * volume
         
         points_neighbor = get_neighbor_points(point)
-        
+
         for point_neighbor in points_neighbor:
             dot_11 = get_partial_Phi_dot(point_neighbor, point, (0,0))
             dot_22 = get_partial_Phi_dot(point_neighbor, point, (1,1))
@@ -197,15 +197,22 @@ def get_matrix(xy_boundary, f1, f2, dh,
     apply_dirichlet(AllEq, g1, g2)
     return AllEq, all_point, all_tri
 
-0
+
+def is_boundary(point):
+    tris = [unit.tri for unit in Point2Unit[point].keys()]
+    # tris 围绕 point 是闭合的，则不是边界
+    for tri in tris:
+        p1,p2 = tri.getAnotherTwoPoint(point)
+        tri1 = tri.getTri(p1)
+        tri2 = tri.getTri(p2)
+        if tri1 is None or tri2 is None:
+            return True
+    return False
+
 def apply_dirichlet(AllEq, g1, g2):
     # Dirichlet 边界条件
     for point in AllEq.keys():
-        # is_boundary = True if len([1 for tri in [unit.tri for unit in Point2Unit[point].keys()] if None in tri.neighborTri]) >= 0 else False
-        tris = [unit.tri for unit in Point2Unit[point].keys()]
-        # 这个点只要参与过带 boundary 边的三角形，就视为边界点
-        is_boundary = any(None in tri.neighborTri for tri in tris)
-        if is_boundary:
+        if is_boundary(point):
             AllEq[point][0] = {}
             AllEq[point][0][point] = {0:1,
                                       1:0}
@@ -236,7 +243,7 @@ def _apply_dirichlet(AllEq, g1, g2):
             AllEq[point][1]['const'] = g2(point.xy)
             
 
-def solve_matrix_torch(AllEq, all_point, num_epoch=3000, lr=1e-4, device='cpu'):
+def solve_matrix_torch(AllEq, all_point, num_epoch=3000, lr=1e-1, device='cpu'):
     """
     return: Point2Value: {Point: (val1, val2)}
     """
@@ -253,11 +260,14 @@ def solve_matrix_torch(AllEq, all_point, num_epoch=3000, lr=1e-4, device='cpu'):
         b[ip,0] = AllEq[p][0]['const']
         b[ip,1] = AllEq[p][1]['const']
     # Adam 优化器（超快收敛）
-    optimizer = torch.optim.Adam([x], lr=lr)
+    optimizer = torch.optim.SGD([x], lr=lr)
     for epoch in range(num_epoch):
         # --- 构造 Ax（稀疏计算，不建立矩阵）---
         Ax = torch.zeros_like(b) # (n,2)
         for p, ip in Point2Idx.items():
+            if is_boundary(p):
+                x.data[ip,0] = g1(p.xy)
+                x.data[ip,1] = g2(p.xy)
             for d1 in [0,1]:
                 val = 0
                 for pj, coef_d2 in AllEq[p][d1].items():
@@ -266,7 +276,7 @@ def solve_matrix_torch(AllEq, all_point, num_epoch=3000, lr=1e-4, device='cpu'):
                     coef1 = coef_d2[0]
                     coef2 = coef_d2[1]
                     jp = Point2Idx[pj]
-                    val += coef1 * x[jp,0] + coef1 * x[jp,1]
+                    val += coef1 * x[jp,0] + coef2 * x[jp,1]
                 Ax[ip,d1] = val
         # --- loss = 1/2 * ||Ax - b||^2 ---
         error = (Ax - b)**2
@@ -387,7 +397,7 @@ f2 = lambda xy: (lam+2*mu) * 2*(xy[0]**2-xy[0]) + mu * 2*(xy[1]**2-xy[1]) + (lam
 xy_boundary = np.array([[0,0], [1,0], [1,1], [0,1]])
 dh = 0.1
 
-Point2Value, all_point, all_tri = solve_Dirichlet(xy_boundary, g1, g2, f1, f2, lam, mu, dh, num_epoch=10000)
+Point2Value, all_point, all_tri = solve_Dirichlet(xy_boundary, g1, g2, f1, f2, lam, mu, dh, num_epoch=7000)
 
 plot_solve(Point2Value)
 
@@ -399,3 +409,4 @@ l2 = plot_real(Point2Value, u1_real, u2_real)
 plt.savefig(os.path.join(".","output","D22_real.png"))
 
 print(f"L2 loss: {l2}")
+
