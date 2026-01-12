@@ -76,17 +76,13 @@ Weaky form
 $$
 \begin{aligned}
 &
-\lambda (
-    <\partial_1 u_1, \partial_1 v> +
-    <\partial_2 u_2, \partial_1 v>
-) +
-\mu (
-    2 <\partial_1 u_1, \partial_1 v>
-\\& +
-    <\partial_2 u_1, \partial_2 v> +
-    <\partial_1 u_2, \partial_2 v>
-) = - <f_1, v>
-
+(\lambda + 2\mu)(-<\partial_1 u_1, v>_{\partial_1} + <\partial_1 u_1, \partial_1 v>) +
+\\&
+(\lambda + \mu)(-<\partial_2 u_2, v>_{\partial_1} + <\partial_2 u_2, \partial_1 v>) +
+\\&
+\mu (-<\partial_2 u_1, v>_{\partial_2} + <\partial_2 u_1, \partial_2 v>)
+\\&
+= -<f_1, v>
 \end{aligned}
 $$
 
@@ -103,42 +99,56 @@ Then
 $$
 \begin{aligned}
 &
-\lambda (
-    \sum c_{1j} <\partial_1 \Phi_j, \partial_1 \Phi_i> +
-    \sum c_{2j} <\partial_2 \Phi_j,
-    \partial_1 \Phi_i>
+(\lambda + 2\mu) (
+    \sum c_{1j} (<\partial_1 \Phi_j, \partial_1 \Phi_i> -
+    <\partial_1 \Phi_j, \Phi_i>_{\partial_1}
+    )
+) +
+\\&
+(\lambda + \mu) (
+    \sum c_{2j} (
+        <\partial_2 \Phi_j, \partial_1 \Phi_i> -
+        <\partial_2 \Phi_j, \Phi_i>_{\partial_1}
+    )
+) +
+\\&
+\mu (
+    \sum c_{1j} (
+        <\partial_2 \Phi_j, \partial_2 \Phi_i> -
+        <\partial_2 \Phi_j, \Phi_i>_{\partial_2}
+    )
 )
 \\&
-+ \mu (
-    2 \sum c_{1j} <\partial_1 \Phi_j, \partial_1 \Phi_i> +
-
-    \sum c_{1j} <\partial_2 \Phi_j, \partial_2 \Phi_i> 
-\\&
-    +
-    \sum c_{2j} <\partial_1 \Phi_j, \partial_2 \Phi_i>
-)
 = - <f_1, \Phi_i>
 \end{aligned}
 $$
 
 and his brother
 
+
 $$
 \begin{aligned}
 &
-\lambda (
-    \sum c_{2j} <\partial_2 \Phi_j, \partial_2 \Phi_i> +
-    \sum c_{1j} <\partial_1 \Phi_j, \partial_2 \Phi_i>
+(\lambda + 2\mu) (
+    \sum c_{2j} (<\partial_2 \Phi_j, \partial_2 \Phi_i> -
+    <\partial_2 \Phi_j, \Phi_i>_{\partial_2}
+    )
+) +
+\\&
+(\lambda + \mu) (
+    \sum c_{1j} (
+        <\partial_1 \Phi_j, \partial_2\Phi_i> -
+        <\partial_1 \Phi_j, \Phi_i>_{\partial_2}
+    )
+) +
+\\&
+\mu (
+    \sum c_{2j} (
+        <\partial_1 \Phi_j, \partial_1 \Phi_i> -
+        <\partial_1 \Phi_j, \Phi_i>_{\partial_1}
+    )
 )
 \\&
-+ \mu (
-    2 \sum c_{2j} <\partial_2 \Phi_j, \partial_2 \Phi_i> +
-
-    \sum c_{2j} <\partial_1 \Phi_j, \partial_1 \Phi_i> 
-\\&
-    +
-    \sum c_{1j} <\partial_2 \Phi_j, \partial_1 \Phi_i>
-)
 = - <f_2, \Phi_i>
 \end{aligned}
 $$
@@ -161,21 +171,36 @@ $$
 \\&\text{for j in Neighbor(i):}
 \\&
 \mathrm{Equation[i][0][j][0]} =
-(\lambda+2\mu) <\partial_1 \Phi_j, \partial_1 \Phi_i>
-+ \mu <\partial_2 \Phi_j, \partial_2 \Phi_i>
+(\lambda+2\mu) (<\partial_1 \Phi_j, \partial_1 \Phi_i> -
+<\partial_1 \Phi_j, \Phi_i>_{\partial_1}
+)
++ \mu (<\partial_2 \Phi_j, \partial_2 \Phi_i> -
+<\partial_2 \Phi_j, \Phi_i>_{\partial_2}
+)
 \\&
 \mathrm{Equation[i][0][j][1]} =
-\lambda <\partial_2 \Phi_j, \partial_1 \Phi_i> +
-\mu <\partial_1 \Phi_j, \partial_2 \Phi_i>
-
+\lambda (<\partial_2 \Phi_j, \partial_1 \Phi_i>
+- <\partial_2 \Phi_j, \Phi_i>_{\partial_1}
+) +
+\mu (<\partial_1 \Phi_j, \partial_2 \Phi_i> -
+<\partial_1 \Phi_j, \Phi_i>_{\partial_2}
+)
 \\&
 \mathrm{Equation[i][1][j][1]} =
-(\lambda+2\mu) <\partial_2 \Phi_j, \partial_2 \Phi_i>
-+ \mu <\partial_1 \Phi_j, \partial_1 \Phi_i>
+(\lambda+2\mu) (<\partial_2 \Phi_j, \partial_2 \Phi_i> -
+<\partial_2 \Phi_j, \Phi_i>_{\partial_2}
+)
++ \mu (<\partial_1 \Phi_j, \partial_1 \Phi_i> -
+<\partial_1 \Phi_j, \Phi_i>_{\partial_1}
+)
 \\&
 \mathrm{Equation[i][1][j][0]} =
-\lambda <\partial_1 \Phi_j, \partial_2 \Phi_i> +
-\mu <\partial_2 \Phi_j, \partial_1 \Phi_i>
+\lambda (<\partial_1 \Phi_j, \partial_2 \Phi_i> -
+<\partial_1 \Phi_j, \Phi_i>_{\partial_2}
+) +
+\mu (<\partial_2 \Phi_j, \partial_1 \Phi_i> -
+<\partial_2 \Phi_j, \Phi_i>_{\partial_1}
+)
 \end{aligned}
 $$
 

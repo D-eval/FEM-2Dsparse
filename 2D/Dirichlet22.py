@@ -194,10 +194,30 @@ def get_matrix(xy_boundary, f1, f2, dh,
             AllEq[point][1][point_neighbor][1] = (2*mu+lam)*dot_22 + mu*dot_11
             AllEq[point][1][point_neighbor][0] = lam*dot_12 + mu*dot_21
  
-    #apply_dirichlet(AllEq, g1, g2)
+    apply_dirichlet(AllEq, g1, g2)
     return AllEq, all_point, all_tri
 
+0
 def apply_dirichlet(AllEq, g1, g2):
+    # Dirichlet 边界条件
+    for point in AllEq.keys():
+        # is_boundary = True if len([1 for tri in [unit.tri for unit in Point2Unit[point].keys()] if None in tri.neighborTri]) >= 0 else False
+        tris = [unit.tri for unit in Point2Unit[point].keys()]
+        # 这个点只要参与过带 boundary 边的三角形，就视为边界点
+        is_boundary = any(None in tri.neighborTri for tri in tris)
+        if is_boundary:
+            AllEq[point][0] = {}
+            AllEq[point][0][point] = {0:1,
+                                      1:0}
+            AllEq[point][0]['const'] = g1(point.xy)
+            
+            AllEq[point][1] = {}
+            AllEq[point][1][point] = {0:0,
+                                      1:1}
+            AllEq[point][1]['const'] = g2(point.xy)
+
+
+def _apply_dirichlet(AllEq, g1, g2):
     # Dirichlet 边界条件
     for point in AllEq.keys():
         # is_boundary = True if len([1 for tri in [unit.tri for unit in Point2Unit[point].keys()] if None in tri.neighborTri]) >= 0 else False
@@ -216,7 +236,7 @@ def apply_dirichlet(AllEq, g1, g2):
             AllEq[point][1]['const'] = g2(point.xy)
             
 
-def solve_matrix_torch(AllEq, all_point, num_epoch=3000, lr=4e-4, device='cpu'):
+def solve_matrix_torch(AllEq, all_point, num_epoch=3000, lr=1e-4, device='cpu'):
     """
     return: Point2Value: {Point: (val1, val2)}
     """
@@ -251,9 +271,9 @@ def solve_matrix_torch(AllEq, all_point, num_epoch=3000, lr=4e-4, device='cpu'):
         # --- loss = 1/2 * ||Ax - b||^2 ---
         error = (Ax - b)**2
         error = error.view(-1)
-        choice = F.softmax(error * 100, dim=0)
-        loss = torch.sum(error * choice)
-        # loss = torch.mean(error)
+        #choice = F.softmax(error * 100, dim=0)
+        #loss = torch.sum(error * choice)
+        loss = torch.mean(error)
         
         optimizer.zero_grad()
         loss.backward()
@@ -367,7 +387,7 @@ f2 = lambda xy: (lam+2*mu) * 2*(xy[0]**2-xy[0]) + mu * 2*(xy[1]**2-xy[1]) + (lam
 xy_boundary = np.array([[0,0], [1,0], [1,1], [0,1]])
 dh = 0.1
 
-Point2Value, all_point, all_tri = solve_Dirichlet(xy_boundary, g1, g2, f1, f2, lam, mu, dh, num_epoch=3000)
+Point2Value, all_point, all_tri = solve_Dirichlet(xy_boundary, g1, g2, f1, f2, lam, mu, dh, num_epoch=10000)
 
 plot_solve(Point2Value)
 
