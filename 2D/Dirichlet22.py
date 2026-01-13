@@ -376,9 +376,134 @@ def plot_real(Point2Value, u1_real, u2_real):
 
     return loss / len(Point2Value)
 
+
+def ColEqRaw(AllEq):
+    all_x = []
+    for point_j in AllEq.keys():
+        for point_i in AllEq[point_j].keys():
+            if point_i == 'const':
+                continue
+            if point_i not in all_x:
+                all_x.append(point_i)
+    equation_num = len(all_x)
+    return equation_num==len(all_x)
+
+
+def approx0(x, eps=1e-10):
+    return -eps <= x <= eps
+
+
+def solve_sparse(AllEq):
+    '''
+    能把AllEq消元成对角
+    注意 AllEq 不包含边界
+    :param AllEq: {point_j: {point_i: coef, const: b}}
+    '''
+    assert ColEqRaw(AllEq), "行列数不相等"
+    print("开始消元")
+    # gauss消元法
+    AllPoint = list(AllEq.keys())
+    for point_j in AllPoint:
+        c_jj = AllEq[point_j][point_j]
+        assert c_jj > 0
+        # 先把 Eq[j][j] 化成 1
+        for point_i in AllEq[point_j].keys():
+            # 这里包括了 const
+            AllEq[point_j][point_i] /= c_jj
+        # 然后去消去这一列其他人
+        for point_j2 in AllPoint:
+            if point_j2 == point_j:
+                continue
+            # 如果不为0，把 point_j 那一行 加到 Point_j2 行
+            if not AllEq[point_j2].get(point_j):
+                continue
+            if approx0(AllEq[point_j2][point_j]):
+                AllEq[point_j2].pop(point_j)
+                continue
+            c_j2j = AllEq[point_j2][point_j]
+            # 只要操作 AllEq[point_j] 这些列
+            for point_i in AllEq[point_j]:
+                if AllEq[point_j2].get(point_i):
+                    AllEq[point_j2][point_i] -=\
+                        AllEq[point_j][point_i] * c_j2j
+                else:
+                    AllEq[point_j2][point_i] =\
+                        - AllEq[point_j][point_i] * c_j2j
+    print("消元完成")
+
+def success_solve(AllEq):
+    '''
+    检查是否成功对角化
+    '''
+    for point_j in AllEq.keys():
+        for point_i in AllEq[point_j].keys():
+            if point_i == 'const':
+                continue
+            if point_i==point_j:
+                if AllEq[point_j][point_i] != 1:
+                    return False
+                else:
+                    continue
+            if AllEq[point_j][point_i] != 0:
+                return False
+    return True
+
+
 def solve_Dirichlet(xy_boundary, g1, g2, f1, f2, lam, mu, dh, num_epoch):
     AllEq, all_point, all_tri = get_matrix(xy_boundary, f1, f2, dh, lam, mu, g1, g2)
-    Point2Value = solve_matrix_torch(AllEq, all_point, num_epoch=num_epoch)
+    
+    # 先把 AllEq 换成 {(point,dim): {(point,dim):coef}, "const"}
+    new_AllEq = {}
+    for point_j, dim_pointi_dim in AllEq.items():
+        for dim_j, pointi_dim in dim_pointi_dim.items():
+            new_AllEq[(point_j,dim_j)] = {}
+            for point_i, dim_coef in pointi_dim.items():
+                if point_i == 'const':
+                    new_AllEq[(point_j,dim_j)]['const'] = dim_coef
+                    continue
+                for dim_i, coef in dim_coef.items():
+                    new_AllEq[(point_j,dim_j)][(point_i,dim_i)] = coef
+                 
+    AllEq = new_AllEq
+    All_PointDim = list(AllEq.keys())
+    # 去除边界的方程
+    for pointj_dimj in All_PointDim:
+        if is_boundary(pointj_dimj[0]):
+            AllEq.pop(pointj_dimj)
+    # 去除边界的变量
+    for pointj_dimj in AllEq.keys():
+        AllKey = list(AllEq[pointj_dimj].keys())
+        for pointi_dimi in AllKey:
+            if pointi_dimi == 'const':
+                continue
+            if is_boundary(pointi_dimi[0]):
+                AllEq[pointj_dimj].pop(pointi_dimi)
+    
+    solve_sparse(AllEq)
+    assert success_solve(AllEq), AllEq
+    
+    Point2Value = {}
+    for pointj_dimj in All_PointDim:
+        if is_boundary(pointj_dimj[0]):
+            dimj = pointj_dimj[1]
+            g_select = [g1,g2][dimj]
+            Point2Value[pointj_dimj] = g_select(pointj_dimj[0].xy)
+        else:
+            Point2Value[pointj_dimj] =\
+                AllEq[pointj_dimj]['const']
+                
+    new_Point2Value = {}
+    # {Point: (val1, val2)}
+    for point_dim, value in Point2Value.items():
+        point, dim = point_dim
+        if new_Point2Value.get(point) is None:
+            new_Point2Value[point] = [None,None]
+            new_Point2Value[point][dim] = value
+        else:
+            new_Point2Value[point][dim] = value
+
+    Point2Value = new_Point2Value
+    # Point2Value = solve_matrix_torch(AllEq, all_point, num_epoch=num_epoch)
     return Point2Value, all_point, all_tri
 
 

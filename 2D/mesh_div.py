@@ -49,6 +49,10 @@ class Point:
     def __init__(self, x, y):
         self.xy = np.array([x,y])
         AllPoint.append(self)
+    def __str__(self):
+        return "P({:.5f},{:.5f})".format(self.xy[0], self.xy[1])
+    def __repr__(self):
+        return self.__str__()
 
 ori_point1 = Point(-3,-3)
 ori_point2 = Point(3,-3)

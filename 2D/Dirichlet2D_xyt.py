@@ -84,7 +84,7 @@ def get_phi_dot(unit1, unit2):
     P1 = unit1.getPoint()[0]
     P2 = unit2.getPoint()[0]
     if P1 != P2:
-        P0 = tri.getAnotherPoint(p1,p2)
+        P0 = tri.getAnotherPoint(P1,P2)
         p1 = P1.xy - P0.xy
         p2 = P2.xy - P0.xy
         det = np.abs(p1[0]*p2[1] - p2[1]*p1[0])
@@ -209,37 +209,76 @@ def is_boundary(point):
             return True
     return False
 
+def approx0(x, eps=1e-10):
+    return -eps <= x <= eps
+
+
+def ColEqRaw(AllEq):
+    all_x = []
+    for point_j in AllEq.keys():
+        for point_i in AllEq[point_j].keys():
+            if point_i == 'const':
+                continue
+            if point_i not in all_x:
+                all_x.append(point_i)
+    equation_num = len(all_x)
+    return equation_num==len(all_x)
+
+
 def solve_sparse(AllEq):
     '''
     能把AllEq消元成对角
     注意 AllEq 不包含边界
     :param AllEq: {point_j: {point_i: coef, const: b}}
     '''
+    assert ColEqRaw(AllEq), "行列数不相等"
+    print("开始消元")
     # gauss消元法
-    for point_j in AllEq.keys():
+    AllPoint = list(AllEq.keys())
+    for point_j in AllPoint:
         c_jj = AllEq[point_j][point_j]
         assert c_jj > 0
         # 先把 Eq[j][j] 化成 1
         for point_i in AllEq[point_j].keys():
-            if point_i == 'const':
-                continue
+            # 这里包括了 const
             AllEq[point_j][point_i] /= c_jj
         # 然后去消去这一列其他人
-        for point_j2 in AllEq.keys():
+        for point_j2 in AllPoint:
             if point_j2 == point_j:
                 continue
             # 如果不为0，把 point_j 那一行 加到 Point_j2 行
-            if AllEq[point_j2][point_j] == 0:
+            if not AllEq[point_j2].get(point_j):
                 continue
-            c_j2j2 = AllEq[point_j2][point_j2]
-            for point_i in AllEq[point_j].keys():
+            if approx0(AllEq[point_j2][point_j]):
+                AllEq[point_j2].pop(point_j)
+                continue
+            c_j2j = AllEq[point_j2][point_j]
+            # 只要操作 AllEq[point_j] 这些列
+            for point_i in AllEq[point_j]:
                 if AllEq[point_j2].get(point_i):
                     AllEq[point_j2][point_i] -=\
-                        AllEq[point_j][point_i] * c_j2j2
+                        AllEq[point_j][point_i] * c_j2j
                 else:
                     AllEq[point_j2][point_i] =\
-                        - AllEq[point_j][point_i] * c_j2j2
+                        - AllEq[point_j][point_i] * c_j2j
+    print("消元完成")
 
+def success_solve(AllEq):
+    '''
+    检查是否成功对角化
+    '''
+    for point_j in AllEq.keys():
+        for point_i in AllEq[point_j].keys():
+            if point_i == 'const':
+                continue
+            if point_i==point_j:
+                if AllEq[point_j][point_i] != 1:
+                    return False
+                else:
+                    continue
+            if AllEq[point_j][point_i] != 0:
+                return False
+    return True
 
 def ode_2D1T(c, f, g, u0, dt, t1, theta,
              dh, xy_boundary):
@@ -258,9 +297,8 @@ def ode_2D1T(c, f, g, u0, dt, t1, theta,
     all_tri, all_point = get_tri(xy_boundary, dh, need_disp=False)
     get_units(all_tri)
 
-    Point2AllValue = {point:[u0(point.xy)] for point in all_point}
-
     t = 0
+    Point2AllValue = {point:[(t, u0(point.xy))] for point in all_point}
 
     while t < t1:
         AllEq = {} # 未知数是 u^{n+1}
@@ -273,13 +311,13 @@ def ode_2D1T(c, f, g, u0, dt, t1, theta,
                 ) * dt
             points_neighbor = get_neighbor_points(point_j)
             for point_i in points_neighbor:
-                dot_D = get_DPhi_dot(point_i, point_j)
+                dot_D = get_DPhi_dot(point_i, point_j, lambda _: 1)
                 dot = get_Phi_dot(point_i, point_j)
                 c_i = c(point_i.xy, t)
                 
                 AllEq[point_j][point_i] = dot + dt*theta* dot_D* c_i
                 AllEq[point_j]['const'] +=\
-                    Point2AllValue[point_i][-1] (*\
+                    Point2AllValue[point_i][-1][1] * (\
                     dot - dt*(1-theta)* c_i * dot_D \
                     )
         for point_j in all_point:
@@ -297,12 +335,13 @@ def ode_2D1T(c, f, g, u0, dt, t1, theta,
                     AllEq[point_j].pop(point_i)
                     
         solve_sparse(AllEq)
+        assert success_solve(AllEq), AllEq
         
         for point_j in all_point:
             if is_boundary(point_j):
-                Point2AllValue[point_j].append(g(point_j.xy,t+dt))
+                Point2AllValue[point_j].append((t+dt, g(point_j.xy,t+dt)))
             else:
-                Point2AllValue[point_j].append(AllEq[point_j]['const'])
+                Point2AllValue[point_j].append((t+dt, AllEq[point_j]['const']))
         t += dt
         print(f'solved t = {t}, dt = {dt}, t1 = {t1}')
 
@@ -352,6 +391,45 @@ def plot_real(Point2Value, u_real):
     return loss / len(Point2Value)
 
 
+def eval_solve(Point2AllValue, u_real):
+    Point2AllValue_real = {}
+    l2 = 0
+    for point, list_t_u in Point2AllValue.items():
+        Point2AllValue_real[point] = []
+        for t, u in list_t_u:
+            Point2AllValue_real[point].append((t, u_real(point.xy, t)))
+            l2 += (u - u_real(point.xy, t))**2
+
+
+    l2 /= len(Point2AllValue) * len(list_t_u)
+
+    print(f'l2 = {l2}')
+
+    assert len(list_t_u) == int(t1//dt)+1
+
+    energy_solved_list = []
+    energy_real_list = []
+
+    for t in range(int(t1//dt)+1):
+        energy_solved = 0
+        energy_real = 0
+        for point, list_t_u in Point2AllValue.items():
+            energy_solved += list_t_u[t][1] ** 2
+            energy_real += Point2AllValue_real[point][t][1] ** 2
+        energy_solved_list.append(energy_solved)
+        energy_real_list.append(energy_real)
+
+    show_idx = -1
+    plt.subplot(121)
+    plt.plot(np.arange(0,t1+1e-5,dt)[:show_idx], energy_solved_list[:show_idx], label='energy solved')
+    plt.legend()
+    plt.subplot(122)
+    plt.plot(np.arange(0,t1+1e-5,dt)[:show_idx], energy_real_list[:show_idx], label='energy real')
+    plt.legend()
+    plt.savefig(os.path.join('output', f'xyt_dh{dh}_dt{dt}_theta{theta}.png'))
+    plt.close()
+
+
 u_real = lambda xy, t: np.exp(xy[0]+xy[1]+t)
 
 c = lambda xy, t: 2
@@ -361,10 +439,10 @@ u0 = lambda xy: np.exp(xy[0]+xy[1])
 
 g = lambda xy, t: np.exp(xy[0]+xy[1]+t)
 
-dh = 1/8
+dh = 1/16
 
-theta = 1/2
-dt = dh
+theta = 1
+dt = 4 * dh**2
 
 xy_boundary = np.array([[0,0], [1,0], [1,1], [0,1]])
 t1 = 1
@@ -372,3 +450,4 @@ t1 = 1
 Point2AllValue = ode_2D1T(c, f, g, u0, dt, t1, theta,
              dh, xy_boundary)
 
+eval_solve(Point2AllValue, u_real)
