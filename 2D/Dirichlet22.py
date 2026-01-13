@@ -477,6 +477,10 @@ def solve_Dirichlet(xy_boundary, g1, g2, f1, f2, lam, mu, dh, num_epoch):
             if pointi_dimi == 'const':
                 continue
             if is_boundary(pointi_dimi[0]):
+                g_select = [g1,g2][pointi_dimi[1]]
+                AllEq[pointj_dimj]['const'] -= \
+                    AllEq[pointj_dimj][pointi_dimi] * \
+                        g_select(pointi_dimi[0].xy)
                 AllEq[pointj_dimj].pop(pointi_dimi)
     
     solve_sparse(AllEq)
@@ -520,18 +524,17 @@ f1 = lambda xy: (lam+3*mu) * (-pi**2 * sin(pi*xy[0]) * sin(pi*xy[1])) + (lam+mu)
 f2 = lambda xy: (lam+2*mu) * 2*(xy[0]**2-xy[0]) + mu * 2*(xy[1]**2-xy[1]) + (lam+mu) * pi**2 * cos(pi*xy[0]) * cos(pi*xy[1])
 
 xy_boundary = np.array([[0,0], [1,0], [1,1], [0,1]])
-dh = 0.1
+dh = 1/16
 
 Point2Value, all_point, all_tri = solve_Dirichlet(xy_boundary, g1, g2, f1, f2, lam, mu, dh, num_epoch=7000)
 
 plot_solve(Point2Value)
 
-plt.savefig(os.path.join(".","output","D22_solve.png"))
+plt.savefig(os.path.join(".","output",f"D22_solve_dh{dh}.png"))
 
 u1_real = lambda xy: sin(pi*xy[0]) * sin(pi*xy[1])
 u2_real = lambda xy: xy[0]*(xy[0]-1)*xy[1]*(xy[1]-1)
 l2 = plot_real(Point2Value, u1_real, u2_real)
-plt.savefig(os.path.join(".","output","D22_real.png"))
+plt.savefig(os.path.join(".","output",f"D22_real_dh{dh}.png"))
 
 print(f"L2 loss: {l2}")
-

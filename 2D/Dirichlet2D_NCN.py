@@ -348,9 +348,112 @@ def plot_real(Point2Value, u_real):
 
     return loss / len(Point2Value)
 
+
+
+def ColEqRaw(AllEq):
+    all_x = []
+    for point_j in AllEq.keys():
+        for point_i in AllEq[point_j].keys():
+            if point_i == 'const':
+                continue
+            if point_i not in all_x:
+                all_x.append(point_i)
+    equation_num = len(all_x)
+    return equation_num==len(all_x)
+
+
+def approx0(x, eps=1e-10):
+    return -eps <= x <= eps
+
+
+def solve_sparse(AllEq):
+    '''
+    能把AllEq消元成对角
+    注意 AllEq 不包含边界
+    :param AllEq: {point_j: {point_i: coef, const: b}}
+    '''
+    assert ColEqRaw(AllEq), "行列数不相等"
+    print("开始消元")
+    # gauss消元法
+    AllPoint = list(AllEq.keys())
+    for point_j in AllPoint:
+        c_jj = AllEq[point_j][point_j]
+        assert c_jj > 0
+        # 先把 Eq[j][j] 化成 1
+        for point_i in AllEq[point_j].keys():
+            # 这里包括了 const
+            AllEq[point_j][point_i] /= c_jj
+        # 然后去消去这一列其他人
+        for point_j2 in AllPoint:
+            if point_j2 == point_j:
+                continue
+            # 如果不为0，把 point_j 那一行 加到 Point_j2 行
+            if not AllEq[point_j2].get(point_j):
+                continue
+            if approx0(AllEq[point_j2][point_j]):
+                AllEq[point_j2].pop(point_j)
+                continue
+            c_j2j = AllEq[point_j2][point_j]
+            # 只要操作 AllEq[point_j] 这些列
+            for point_i in AllEq[point_j]:
+                if AllEq[point_j2].get(point_i):
+                    AllEq[point_j2][point_i] -=\
+                        AllEq[point_j][point_i] * c_j2j
+                else:
+                    AllEq[point_j2][point_i] =\
+                        - AllEq[point_j][point_i] * c_j2j
+    print("消元完成")
+
+def success_solve(AllEq):
+    '''
+    检查是否成功对角化
+    '''
+    for point_j in AllEq.keys():
+        for point_i in AllEq[point_j].keys():
+            if point_i == 'const':
+                continue
+            if point_i==point_j:
+                if AllEq[point_j][point_i] != 1:
+                    return False
+                else:
+                    continue
+            if AllEq[point_j][point_i] != 0:
+                return False
+    return True
+
+
 def solve_Dirichlet(xy_boundary, g, f, dh, c, num_epoch, show_train=False, lr=3e-2):
     AllEq, all_point, all_tri = get_matrix(xy_boundary, f, dh, c, g)
-    Point2Value = solve_matrix_torch(AllEq, all_point, num_epoch=num_epoch, show_train=show_train, lr=lr)
+
+    all_point = list(AllEq.keys())
+    for point in all_point:
+        if is_boundary(point):
+            AllEq.pop(point)
+    
+    for point in AllEq.keys():
+        AllKey = list(AllEq[point].keys())
+        for pointi in AllKey:
+            if pointi == 'const':
+                continue
+            if is_boundary(pointi):
+                AllEq[point]['const'] -= \
+                    AllEq[point][pointi] * g(pointi.xy)
+                AllEq[point].pop(pointi)
+                
+                
+    solve_sparse(AllEq)
+    assert success_solve(AllEq), AllEq
+    
+    Point2Value = {}
+    for point in AllEq.keys():
+        if is_boundary(point):
+            Point2Value[point] = \
+                g(point.xy)
+        else:
+            Point2Value[point] = \
+                AllEq[point]['const']
+    
+    # Point2Value = solve_matrix_torch(AllEq, all_point, num_epoch=num_epoch, show_train=show_train, lr=lr)
     return Point2Value, all_point, all_tri
 
 
@@ -369,7 +472,7 @@ g = lambda xy: np.exp(xy[0]+xy[1])
 xy_boundary = np.array([[0,0], [1,0], [1,1], [0,1]])
 
 
-dh = 1/32
+dh = 1/16
 
 Point2Value, all_point, all_tri = solve_Dirichlet(xy_boundary, g, f, dh, c, num_epoch=14000, show_train=True, lr=3e-2)
 plot_solve(Point2Value)
