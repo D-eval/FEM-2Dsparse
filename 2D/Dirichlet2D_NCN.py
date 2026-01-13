@@ -369,7 +369,7 @@ g = lambda xy: np.exp(xy[0]+xy[1])
 xy_boundary = np.array([[0,0], [1,0], [1,1], [0,1]])
 
 
-dh = 1/16
+dh = 1/32
 
 Point2Value, all_point, all_tri = solve_Dirichlet(xy_boundary, g, f, dh, c, num_epoch=14000, show_train=True, lr=3e-2)
 plot_solve(Point2Value)

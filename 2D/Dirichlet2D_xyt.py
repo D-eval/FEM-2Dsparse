@@ -81,6 +81,43 @@ def get_Dphi_dot(unit1, unit2, kappa):
 def get_phi_dot(unit1, unit2):
     assert unit1.tri == unit2.tri
     tri = unit1.tri
+    P1 = unit1.getPoint()[0]
+    P2 = unit2.getPoint()[0]
+    if P1 != P2:
+        P0 = tri.getAnotherPoint(p1,p2)
+        p1 = P1.xy - P0.xy
+        p2 = P2.xy - P0.xy
+        det = np.abs(p1[0]*p2[1] - p2[1]*p1[0])
+        return 1/24 * det
+    else:
+        # P1: (1,0)
+        P0, P2 = tri.getAnotherTwoPoint(P2)
+        p1 = P1.xy - P0.xy
+        p2 = P2.xy - P0.xy
+        det = np.abs(p1[0]*p2[1] - p2[1]*p1[0])
+        return 1/12 * det
+
+
+def get_Phi_dot(p1, p2):
+    if p1 == p2:
+        dot = 0
+        for unit1, idx1 in Point2Unit[p1].items():
+            dot += get_phi_dot(unit1, unit1)
+        return dot
+    unit_dict1 = Point2Unit[p1]
+    tri_units = {} # {tri: (unit1, unit2)}
+    for unit1, idx1 in unit_dict1.items():
+        tri1 = unit1.tri
+        if p2 in tri1.points:
+            unit2 = [unit2 for unit2 in Point2Unit[p2].keys() if unit2.tri == tri1][0]
+            tri_units[tri1] = (unit1, unit2)
+        else:
+            pass
+    dot = 0
+    for tri, (unit1, unit2) in tri_units.items():
+        dot += get_phi_dot(unit1, unit2)
+    return dot
+    
     
 
 def get_partial_phi_dot(unit1, unit2, dim_choice):
@@ -161,53 +198,6 @@ def get_units(all_tri):
             _ = Unit(tri, i)
             
 
-# xy: (2,)
-def get_matrix(xy_boundary, f, dh, c, g):
-    AllUnit.clear()
-    # 网格
-    all_tri, all_point = get_tri(xy_boundary, dh, need_disp=False)
-    # plt.show()
-    get_units(all_tri)
-    # 每个 Point 对应一个方程
-    # 由于方程的系数是稀疏的，用字典保存
-    # 方程的key是 Point_neighbor 的分量，value 是 Point_neighbor 分量的系数
-    # {Point: {Point: coef}}
-    AllEq = {}
-    # 方程数: point
-    # 未知数个数: point
-    for point, unit_dict in Point2Unit.items():
-        # 这表示一个 Phi
-        AllEq[point] = {}
-        xy_i = point.xy
-        f_xi = f(xy_i)
-        area = get_Phi_area(point)
-        volume = area / 3
-        AllEq[point]['const'] = - f_xi * volume
-
-        points_neighbor = get_neighbor_points(point)
-
-
-
-        for point_neighbor in points_neighbor:
-            xy_j = point_neighbor.xy
-            xy = (xy_i + xy_j) / 2
-            dot_11 = get_partial_Phi_dot(point_neighbor, point, (0,0))
-            dot_22 = get_partial_Phi_dot(point_neighbor, point, (1,1))
-            dot_12 = get_partial_Phi_dot(point_neighbor, point, (0,1))
-            dot_21 = get_partial_Phi_dot(point_neighbor, point, (1,0))
-            # assert dot_12 == dot_21
-            coef =  c[0][0](xy) * dot_11 +\
-                c[1][0](xy) * dot_12 +\
-                c[0][1](xy) * dot_21 +\
-                c[1][1](xy) * dot_22
-            AllEq[point][point_neighbor] = coef
-
-
-    apply_dirichlet(AllEq, g)
-    return AllEq, all_point, all_tri
-
-
-
 def is_boundary(point):
     tris = [unit.tri for unit in Point2Unit[point].keys()]
     # tris 围绕 point 是闭合的，则不是边界
@@ -219,19 +209,50 @@ def is_boundary(point):
             return True
     return False
 
+def solve_sparse(AllEq):
+    '''
+    能把AllEq消元成对角
+    注意 AllEq 不包含边界
+    :param AllEq: {point_j: {point_i: coef, const: b}}
+    '''
+    # gauss消元法
+    for point_j in AllEq.keys():
+        c_jj = AllEq[point_j][point_j]
+        assert c_jj > 0
+        # 先把 Eq[j][j] 化成 1
+        for point_i in AllEq[point_j].keys():
+            if point_i == 'const':
+                continue
+            AllEq[point_j][point_i] /= c_jj
+        # 然后去消去这一列其他人
+        for point_j2 in AllEq.keys():
+            if point_j2 == point_j:
+                continue
+            # 如果不为0，把 point_j 那一行 加到 Point_j2 行
+            if AllEq[point_j2][point_j] == 0:
+                continue
+            c_j2j2 = AllEq[point_j2][point_j2]
+            for point_i in AllEq[point_j].keys():
+                if AllEq[point_j2].get(point_i):
+                    AllEq[point_j2][point_i] -=\
+                        AllEq[point_j][point_i] * c_j2j2
+                else:
+                    AllEq[point_j2][point_i] =\
+                        - AllEq[point_j][point_i] * c_j2j2
 
 
-def apply_dirichlet(AllEq, g):
-    # Dirichlet 边界条件
-    for point in AllEq.keys():
-        if is_boundary(point):
-            xy = point.xy
-            AllEq[point]["const"] = g(xy)
-            AllEq[point][point] = 1
-
-
-
-def ode_2D1T(c, f, g, u0):
+def ode_2D1T(c, f, g, u0, dt, t1, theta,
+             dh, xy_boundary):
+    '''
+    ode_2D1T 的 Docstring
+    
+    :param c: lambda xy, t: float
+    :param f: lambda xy, t: float
+    :param g: lambda xy, t: float
+    :param u0: lambda xy: float
+    :param dt: float
+    :param t1: float
+    '''
     AllUnit.clear()
     # 网格
     all_tri, all_point = get_tri(xy_boundary, dh, need_disp=False)
@@ -239,14 +260,53 @@ def ode_2D1T(c, f, g, u0):
 
     Point2AllValue = {point:[u0(point.xy)] for point in all_point}
 
-    AllEq = {}
-    for point_j in all_point:
-        AllEq[point_j] = {}
-        AllEq[point_j]['const'] = get_Phi_area(point_j)/3 * f(point.xy)
-        points_neighbor = get_neighbor_points(point_j)
-        for point_i in points_neighbor:
-            dot_D = get_DPhi_dot(point_i, point_j)
-            dot = get_dot(point_i, point_j)
+    t = 0
+
+    while t < t1:
+        AllEq = {} # 未知数是 u^{n+1}
+        for point_j in all_point:
+            AllEq[point_j] = {}
+            AllEq[point_j]['const'] =\
+                get_Phi_area(point_j)/3 * (\
+                theta*f(point_j.xy,t+dt)+\
+                (1-theta)*f(point_j.xy,t)\
+                ) * dt
+            points_neighbor = get_neighbor_points(point_j)
+            for point_i in points_neighbor:
+                dot_D = get_DPhi_dot(point_i, point_j)
+                dot = get_Phi_dot(point_i, point_j)
+                c_i = c(point_i.xy, t)
+                
+                AllEq[point_j][point_i] = dot + dt*theta* dot_D* c_i
+                AllEq[point_j]['const'] +=\
+                    Point2AllValue[point_i][-1] (*\
+                    dot - dt*(1-theta)* c_i * dot_D \
+                    )
+        for point_j in all_point:
+            if is_boundary(point_j):
+                AllEq.pop(point_j)
+        for point_j in AllEq.keys():
+            AllEqKeys = list(AllEq[point_j].keys())
+            for point_i in AllEqKeys:
+                if point_i == 'const':
+                    continue
+                if is_boundary(point_i):
+                    AllEq[point_j]['const'] -=\
+                        AllEq[point_j][point_i] *\
+                            g(point_i.xy,t+dt)
+                    AllEq[point_j].pop(point_i)
+                    
+        solve_sparse(AllEq)
+        
+        for point_j in all_point:
+            if is_boundary(point_j):
+                Point2AllValue[point_j].append(g(point_j.xy,t+dt))
+            else:
+                Point2AllValue[point_j].append(AllEq[point_j]['const'])
+        t += dt
+        print(f'solved t = {t}, dt = {dt}, t1 = {t1}')
+
+    return Point2AllValue
 
 
 def plot_solve(Point2Value):
@@ -291,33 +351,24 @@ def plot_real(Point2Value, u_real):
 
     return loss / len(Point2Value)
 
-def solve_Dirichlet(xy_boundary, g, f, dh, c, num_epoch, show_train=False, lr=3e-2):
-    AllEq, all_point, all_tri = get_matrix(xy_boundary, f, dh, c, g)
-    Point2Value = solve_matrix_torch(AllEq, all_point, num_epoch=num_epoch, show_train=show_train, lr=lr)
-    return Point2Value, all_point, all_tri
 
+u_real = lambda xy, t: np.exp(xy[0]+xy[1]+t)
 
+c = lambda xy, t: 2
+f = lambda xy, t: - np.exp(xy[0]+xy[1]+t)
 
-c = [[
-    lambda xy: 1,
-    lambda xy: 2],[
-    lambda xy: 3,
-    lambda xy: 4
-    ]]
+u0 = lambda xy: np.exp(xy[0]+xy[1])
 
-f = lambda xy: 10 * np.exp(xy[0]+xy[1])
+g = lambda xy, t: np.exp(xy[0]+xy[1]+t)
 
-g = lambda xy: np.exp(xy[0]+xy[1])
+dh = 1/8
+
+theta = 1/2
+dt = dh
 
 xy_boundary = np.array([[0,0], [1,0], [1,1], [0,1]])
+t1 = 1
 
+Point2AllValue = ode_2D1T(c, f, g, u0, dt, t1, theta,
+             dh, xy_boundary)
 
-dh = 1/32
-
-Point2Value, all_point, all_tri = solve_Dirichlet(xy_boundary, g, f, dh, c, num_epoch=30000, show_train=True, lr=3e-2)
-plot_solve(Point2Value)
-plt.savefig(os.path.join(".","output",f"D2NCN_solve_dh={dh}.png"))
-u_real = lambda xy: np.exp(xy[0]+xy[1])
-l2 = plot_real(Point2Value, u_real)
-plt.savefig(os.path.join(".","output",f"D2NCN_real_dh={dh}.png"))
-print(f"dh: {dh}, L2 loss: {l2}")
