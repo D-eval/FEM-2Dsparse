@@ -1,9 +1,13 @@
 '''
-Dirichlet2D-NCN
-NCN:
-\nabla c \nabla u = f
-c 是矩阵
+xyt
+ode问题
+计算时间采样点，
+init后
+Point2Value = {Point: [u0]}
+迭代后
+Point2Value = {Point: [u0,u1,...,un]}
 '''
+
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -74,6 +78,11 @@ def get_Dphi_dot(unit1, unit2, kappa):
     dot = kp * area * (nabla1 @ nabla2)
     return dot
 
+def get_phi_dot(unit1, unit2):
+    assert unit1.tri == unit2.tri
+    tri = unit1.tri
+    
+
 def get_partial_phi_dot(unit1, unit2, dim_choice):
     '''
     get_partial_phi_dot 的 Docstring
@@ -112,6 +121,8 @@ def get_DPhi_dot(p1, p2, kappa):
     for tri, (unit1, unit2) in tri_units.items():
         dot += get_Dphi_dot(unit1, unit2, kappa)
     return dot
+
+
 
 def get_partial_Phi_dot(p1, p2, dim_choice):
     if p1 == p2:
@@ -196,6 +207,7 @@ def get_matrix(xy_boundary, f, dh, c, g):
     return AllEq, all_point, all_tri
 
 
+
 def is_boundary(point):
     tris = [unit.tri for unit in Point2Unit[point].keys()]
     # tris 围绕 point 是闭合的，则不是边界
@@ -207,6 +219,8 @@ def is_boundary(point):
             return True
     return False
 
+
+
 def apply_dirichlet(AllEq, g):
     # Dirichlet 边界条件
     for point in AllEq.keys():
@@ -216,95 +230,24 @@ def apply_dirichlet(AllEq, g):
             AllEq[point][point] = 1
 
 
-def solve_matrix_torch(AllEq, all_point, num_epoch=5000, lr=3e-2, device='cpu', show_train=True):
-    """
-    使用 PyTorch（Adam）求解 AllEq 定义的线性系统 A x = b
-    AllEq: { unit_j : { unit_i: coef, ..., 'const': b_j } }
-    """
-    tau = 0.9999
-    Units = list(AllEq.keys())
-    m = len(Units)
-    n = len(all_point)
-    # 批量映射 Index
-    Point2Idx = {p: i for i, p in enumerate(all_point)}
-    # 初始 x（解）
-    x = torch.zeros(n, dtype=torch.float64, device=device, requires_grad=True)
-    # b 向量
-    b = torch.zeros(n, dtype=torch.float64, device=device)
-    mask_bool = torch.ones(n, dtype=bool)
-    for p, ip in Point2Idx.items():
-        b[ip] = AllEq[p]['const']
-        if is_boundary(p):
-            x.data[ip] = AllEq[p]['const']
-            mask_bool[ip] = 0
-    optimizer = torch.optim.Adam([x], lr=lr)
 
-    best_l2 = 100000
-    best_x = torch.zeros_like(x)
+def ode_2D1T(c, f, g, u0):
+    AllUnit.clear()
+    # 网格
+    all_tri, all_point = get_tri(xy_boundary, dh, need_disp=False)
+    get_units(all_tri)
 
-    for epoch in range(num_epoch):
-        # --- 构造 Ax（稀疏计算，不建立矩阵）---
-        Ax = torch.zeros_like(b)
-        for p, ip in Point2Idx.items():
-            if is_boundary(p):
-                x.data[ip] = AllEq[p]['const']
-            val = 0.0
-            for pj, coef in AllEq[p].items():
-                if pj == 'const':
-                    continue
-                jp = Point2Idx[pj]
-                val += coef * x[jp]
-            # if is_boundary(p):
-            #     assert val == b[ip], f"{val}, {b[ip]}"
-            Ax[ip] = val
-        # --- loss = 1/2 * ||Ax - b||^2 ---
-        error = (Ax - b)**2
-        # choice = F.softmax(error * 100, dim=0)
-        # loss = torch.sum(error * choice)
-        loss = torch.mean(error[mask_bool])
-        
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+    Point2AllValue = {point:[u0(point.xy)] for point in all_point}
 
-        if epoch % 100 == 0 and show_train:
-            print(f"Epoch {epoch}, loss = {loss.item()}")
-            # print(f"choiceMax: {choice.max().item()}")
-        # lr *= tau
+    AllEq = {}
+    for point_j in all_point:
+        AllEq[point_j] = {}
+        AllEq[point_j]['const'] = get_Phi_area(point_j)/3 * f(point.xy)
+        points_neighbor = get_neighbor_points(point_j)
+        for point_i in points_neighbor:
+            dot_D = get_DPhi_dot(point_i, point_j)
+            dot = get_dot(point_i, point_j)
 
-        if loss < best_l2:
-            best_l2 = loss.item()
-            best_x[:] = x[:]
-
-    # ===== 把Unit上的解合并成 Point 值 =====
-    Point2Value = {}
-
-    print("best loss: {}".format(best_l2))
-    for point, idx in Point2Idx.items():
-        val = best_x[idx].item()
-        Point2Value[point] = val
-    # print(len(Point2Value))
-    # print(len(all_point))
-    return Point2Value
-
-'''
-def plot_solve(Point2Value):
-    ax = plt.figure().add_subplot(projection='3d')
-    for point, value in Point2Value.items():
-        x,y = point.xy
-        # plot3
-        ax.scatter(x, y, value, color='blue', s=10, label='FEM solution')
-    # plt.show()
-
-def plot_real(Point2Value, u_real):
-    ax = plt.figure().add_subplot(projection='3d')
-    for point, value in Point2Value.items():
-        x,y = point.xy
-        z = u_real(point.xy)
-        # plot3
-        ax.scatter(x, y, z, color='red', s=10, label='Exact solution')
-    # plt.show()
-'''
 
 def plot_solve(Point2Value):
     # point 的 位移 (u1,u2)
@@ -369,9 +312,9 @@ g = lambda xy: np.exp(xy[0]+xy[1])
 xy_boundary = np.array([[0,0], [1,0], [1,1], [0,1]])
 
 
-dh = 1/16
+dh = 1/32
 
-Point2Value, all_point, all_tri = solve_Dirichlet(xy_boundary, g, f, dh, c, num_epoch=50000, show_train=True, lr=3e-2)
+Point2Value, all_point, all_tri = solve_Dirichlet(xy_boundary, g, f, dh, c, num_epoch=30000, show_train=True, lr=3e-2)
 plot_solve(Point2Value)
 plt.savefig(os.path.join(".","output",f"D2NCN_solve_dh={dh}.png"))
 u_real = lambda xy: np.exp(xy[0]+xy[1])

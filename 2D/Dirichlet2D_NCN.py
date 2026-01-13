@@ -238,6 +238,10 @@ def solve_matrix_torch(AllEq, all_point, num_epoch=5000, lr=3e-2, device='cpu', 
             x.data[ip] = AllEq[p]['const']
             mask_bool[ip] = 0
     optimizer = torch.optim.Adam([x], lr=lr)
+
+    best_l2 = 100000
+    best_x = torch.zeros_like(x)
+
     for epoch in range(num_epoch):
         # --- 构造 Ax（稀疏计算，不建立矩阵）---
         Ax = torch.zeros_like(b)
@@ -267,12 +271,17 @@ def solve_matrix_torch(AllEq, all_point, num_epoch=5000, lr=3e-2, device='cpu', 
             print(f"Epoch {epoch}, loss = {loss.item()}")
             # print(f"choiceMax: {choice.max().item()}")
         # lr *= tau
+
+        if loss < best_l2:
+            best_l2 = loss.item()
+            best_x[:] = x[:]
+
     # ===== 把Unit上的解合并成 Point 值 =====
     Point2Value = {}
 
-
+    print("best loss: {}".format(best_l2))
     for point, idx in Point2Idx.items():
-        val = x[idx].item()
+        val = best_x[idx].item()
         Point2Value[point] = val
     # print(len(Point2Value))
     # print(len(all_point))
@@ -339,13 +348,12 @@ def plot_real(Point2Value, u_real):
 
     return loss / len(Point2Value)
 
-def solve_Dirichlet(xy_boundary, g, f, dh, c, num_epoch, show_train=False):
+def solve_Dirichlet(xy_boundary, g, f, dh, c, num_epoch, show_train=False, lr=3e-2):
     AllEq, all_point, all_tri = get_matrix(xy_boundary, f, dh, c, g)
-    Point2Value = solve_matrix_torch(AllEq, all_point, num_epoch=num_epoch, show_train=show_train)
+    Point2Value = solve_matrix_torch(AllEq, all_point, num_epoch=num_epoch, show_train=show_train, lr=lr)
     return Point2Value, all_point, all_tri
 
 
-'''
 
 c = [[
     lambda xy: 1,
@@ -359,20 +367,15 @@ f = lambda xy: 10 * np.exp(xy[0]+xy[1])
 g = lambda xy: np.exp(xy[0]+xy[1])
 
 xy_boundary = np.array([[0,0], [1,0], [1,1], [0,1]])
-dh = 1/8
 
-Point2Value, all_point, all_tri = solve_Dirichlet(xy_boundary, g, f, dh, c, num_epoch=1000)
 
+dh = 1/16
+
+Point2Value, all_point, all_tri = solve_Dirichlet(xy_boundary, g, f, dh, c, num_epoch=14000, show_train=True, lr=3e-2)
 plot_solve(Point2Value)
-
-plt.savefig(os.path.join(".","output","D2NCN_solve.png"))
-
+plt.savefig(os.path.join(".","output",f"D2NCN_solve_dh={dh}.png"))
 u_real = lambda xy: np.exp(xy[0]+xy[1])
-
-
 l2 = plot_real(Point2Value, u_real)
-plt.savefig(os.path.join(".","output","D2NCN_real.png"))
+plt.savefig(os.path.join(".","output",f"D2NCN_real_dh={dh}_l2={l2}.png"))
 
-print(f"L2 loss: {l2}")
-
-'''
+print(f"dh: {dh}, L2 loss: {l2}")
